@@ -89,7 +89,7 @@ def disp_track(pm, dp, season):
     b = d[d["season"].astype(str) == season]
     rows = []
     for L in MD.LINES:
-        rows.append(pd.DataFrame({"p": MD.p_at_least(cur["d_mu"], L, dp.nb_size), "hit": (cur["disposals"] >= L).astype(int)}))
+        rows.append(pd.DataFrame({"p": MD.p_at_least(cur["d_mu"], L, cur["d_size"]), "hit": (cur["disposals"] >= L).astype(int)}))
     a = pd.concat(rows)
     a["bucket"] = pd.cut(a["p"], [0, .1, .2, .3, .4, .5, .6, .7, .8, .9, 1], include_lowest=True)
     cal = a.groupby("bucket", observed=True).agg(n=("hit", "size"), pred=("p", "mean"), act=("hit", "mean")).reset_index()
@@ -133,13 +133,19 @@ def build():
                 "players": [{"n": x.name, "t": x.team, "pos": x.position, "gp": int(x.games_hist),
                              "xs": r(x.exp_shots, 2), "acc": r(x.acc), "lam": r(x.lam),
                              "p1": r(x.p1, 4), "p2": r(x.p2, 4), "p3": r(x.p3, 4),
-                             "dm": r(x.d_mu, 2), "dtog": r(x.d_tog, 0)} for x in g.itertuples()],
+                             "dm": r(x.d_mu, 2), "dr": r(x.d_size, 1), "dtog": r(x.d_tog, 0)} for x in g.itertuples()],
             })
 
     data["track"] = track_record(pm, p, season)
     dpf = os.path.join(HERE, "disp_params.json")
     dp = MD.DParams(**json.load(open(dpf))) if os.path.exists(dpf) else MD.DParams()
     data["settings"]["d_size"] = dp.nb_size
+    data["settings"]["g_size"] = p.nb_size
+    # points per shot (current + previous season), to turn expected shots into an expected score
+    seasons = sorted(pm["season"].astype(str).unique())[-2:]
+    done = mt[(mt["status"] == "CONCLUDED") & (mt["season"].astype(str).isin(seasons))]
+    sh = pm[pm["mid"].isin(done["mid"])]["shots"].sum()
+    data["settings"]["pts_per_shot"] = r((done["hs"].sum() + done["as"].sum()) / sh, 3) if sh else 2.9
     data["disp_track"] = disp_track(pm, dp, season)
 
     os.makedirs(SITE, exist_ok=True)

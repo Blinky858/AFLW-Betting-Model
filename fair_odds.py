@@ -82,7 +82,6 @@ def compute_round(rnd=None):
             wx = getattr(m, "weather", "") or ""
             df = eng.predict_team(team_id, opp_id, is_home, wx, lineup)
             df = df.merge(deng.predict_team(team_id, opp_id, is_home, wx, lineup), on="playerId", how="left")
-            df["d_size"] = dp.nb_size
             df["name"] = df["playerId"].map(eng.pl_name).fillna(
                 df["playerId"].map(dict(zip(named.get("playerId", []), named.get("name", [])))))
             df["team"], df["opp"], df["match"], df["lineup_source"] = team, opp, f"{m.home} v {m.away}", src

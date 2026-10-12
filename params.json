@@ -1,12 +1,13 @@
 {
   "player_decay": 0.96,
-  "team_decay": 0.95,
+  "team_decay": 0.9,
   "season_carry": 0.5,
   "k_share": 2,
-  "k_team": 4,
+  "k_team": 1,
   "k_acc": 10,
   "nb_size": 5,
   "share_power": 1.1,
   "lg_decay": 0.998,
-  "zone_weight": 0.5
+  "zone_weight": 0.5,
+  "sos": 1.0
 }

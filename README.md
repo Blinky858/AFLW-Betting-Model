@@ -1,6 +1,6 @@
 # AFLW player model
 
-A self-updating website with fair odds for goalkicker markets (1+, 2+, 3+) and disposal markets (over/under any line, plus 10+/15+/20+/25+), an odds checker, and the model's track record.
+A self-updating website with fair odds for goalkicker markets (1+, 2+, 3+) and disposal markets (over/under any line, plus 10+ to 35+ milestones), an odds checker, and the model's track record.
 
 ## Put the website online (about 10 minutes, free)
 
@@ -45,7 +45,7 @@ python backtest.py        # re-tune the model, about once a season (about 5 min)
 
 Expected goals = team's expected shots × player's share of team shots × player's goal accuracy.
 
-- **Team shots:** recent shots for, the opponent's recent shots conceded, and home ground.
+- **Team shots:** recent shots for, the opponent's recent shots conceded (both adjusted for who each team has played), and home ground. On the site you can enter the bookie's line and total to scale each team's expected goals to the market.
 - **Share:** the player's recent share of team shots, pulled toward the average for the position she's named in. The 21 named players' shares add up to 100%, so a missing forward's shots go to whoever is named.
 - **Accuracy:** goals ÷ shots, pulled toward the league rate (about 41%).
 - **Goals:** modelled with a negative binomial distribution, which gives P(1+), P(2+) and P(3+).
@@ -56,7 +56,7 @@ Every backtest prediction uses only games played before it. Tuned on 2023–25; 
 
 Expected disposals = disposals per full game on the ground (recent games weighted more, pulled toward her position's average) × expected time on ground × how many disposals the opponent usually concedes. Counts follow a negative binomial distribution, which gives P(over) for any line. Re-tune with `python backtest_disp.py` (about 5 minutes).
 
-Backtest, 2026 out of sample: average miss of 3.40 disposals, against 3.82 for a raw season average and 4.54 for a position average. Over/under probabilities are well calibrated across the 10+, 15+, 20+ and 25+ lines.
+Backtest, 2026 out of sample: average miss of 3.40 disposals, against 3.82 for a raw season average and 4.54 for a position average. Over/under probabilities are well calibrated across the 10+ to 35+ lines.
 
 ## Limits
 

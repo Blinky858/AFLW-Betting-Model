@@ -28,7 +28,7 @@ from scipy import stats
 
 from model import POS_GROUP, WET, load
 
-LINES = [10, 15, 20, 25]   # milestone markets shown on the site (X+ disposals)
+LINES = [10, 15, 20, 25, 30, 35]   # milestone markets shown on the site (X+ disposals)
 
 
 @dataclass
@@ -42,7 +42,10 @@ class DParams:
     g_opp: float = 1.0           # exponent on opponent factor (0 = ignore)
     g_team: float = 0.5          # exponent on own-team factor
     lg_decay: float = 0.998
-    nb_size: float = 15.0
+    sos: float = 0.0             # schedule adjustment of team/opponent disposal ratings
+    nb_size: float = 15.0        # fallback dispersion if no variance curve is fitted
+    recal_g: float = 0.0         # stretch: mu' = mu * (mu/12)^g, lifts high-volume players the shrinkage pulls down too far
+    var_c: tuple = ()            # predictive variance as a quadratic in mu' (c2, c1, c0); spread differs for low vs high volume
 
 
 class DEngine:
@@ -107,9 +110,17 @@ class DEngine:
             rate = (self.pl_d[pid] + p.k_rate * self.pos_rate(g)) / (self.pl_t[pid] + p.k_rate)
             etog = (self.pl_tog[pid] + p.k_tog * self.pos_tog_avg(g)) / (self.pl_n[pid] + p.k_tog)
             rows.append((pid, rate, etog, rate * etog / 100 * f))
-        return pd.DataFrame(rows, columns=["playerId", "d_rate", "d_tog", "d_mu"])
+        df = pd.DataFrame(rows, columns=["playerId", "d_rate", "d_tog", "d_mu_raw"])
+        df["d_mu"] = adjust(df["d_mu_raw"], p)
+        df["d_size"] = size_for(df["d_mu"], p)
+        return df
 
-    def update_team(self, team, opp, is_home, weather, players, opp_disp):
+    def ratings(self, team):
+        p, lg = self.p, self.lg_avg()
+        return ((self.t_for[team] + p.k_team * lg) / (self.t_n[team] + p.k_team) / lg,
+                (self.t_against[team] + p.k_team * lg) / (self.t_n[team] + p.k_team) / lg)
+
+    def update_team(self, team, opp, is_home, weather, players, opp_disp, opp_att=1.0, opp_def=1.0):
         p = self.p
         td = players["disposals"].sum()
         d = p.player_decay
@@ -124,8 +135,8 @@ class DEngine:
             self.pos_d[g] += r.disposals; self.pos_t[g] += tog / 100
             self.pos_tog[g] += tog; self.pos_n[g] += 1
         dt = p.team_decay
-        self.t_for[team] = dt * self.t_for[team] + td
-        self.t_against[team] = dt * self.t_against[team] + opp_disp
+        self.t_for[team] = dt * self.t_for[team] + td / (opp_def ** p.sos)
+        self.t_against[team] = dt * self.t_against[team] + opp_disp / (opp_att ** p.sos)
         self.t_n[team] = dt * self.t_n[team] + 1
         self.lg_d = p.lg_decay * self.lg_d + td
         self.lg_n = p.lg_decay * self.lg_n + 1
@@ -139,13 +150,28 @@ class DEngine:
             self.dry_d += td; self.dry_n += 1
 
 
+def adjust(mu, p: DParams):
+    mu = np.maximum(0.5, np.asarray(mu, float))
+    return mu * (mu / 12.0) ** p.recal_g
+
+
+def size_for(mu, p: DParams):
+    mu = np.asarray(mu, float)
+    if not p.var_c:
+        return np.full_like(mu, p.nb_size)
+    var = np.maximum(np.polyval(p.var_c, mu), 1.08 * mu)
+    return mu ** 2 / (var - mu)
+
+
 def p_at_least(mu, k, r):
     mu = np.asarray(mu, float)
+    r = np.asarray(r, float)
     return stats.nbinom.sf(k - 1, r, r / (r + mu))
 
 
 def nll(mu, y, r):
     mu = np.clip(np.asarray(mu, float), 1e-6, None)
+    r = np.asarray(r, float)
     return float(-np.mean(stats.nbinom.logpmf(y, r, r / (r + mu))))
 
 
@@ -165,9 +191,10 @@ def walk_forward(pm, p: DParams):
                               "season", "round", "mid"]], on="playerId", how="left")
             out.append(df)
         disp = {t: g.loc[g["teamId"] == t, "disposals"].sum() for t in teams}
+        snap = {t: eng.ratings(t) for t in teams}
         for t in teams:
             tg = g[g["teamId"] == t]
             o = [x for x in teams if x != t][0]
             r0 = tg.iloc[0]
-            eng.update_team(t, o, r0.is_home, r0.weather, tg, disp[o])
+            eng.update_team(t, o, r0.is_home, r0.weather, tg, disp[o], opp_att=snap[o][0], opp_def=snap[o][1])
     return pd.concat(out, ignore_index=True), eng

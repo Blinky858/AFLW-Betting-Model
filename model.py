@@ -52,6 +52,7 @@ class Params:
     nb_size: float = 8.0         # negative binomial size (dispersion); large = Poisson
     lg_decay: float = 0.995      # recency weighting of the league-average shots per team-game
     share_power: float = 1.0     # >1 sharpens differences between players' shares before re-normalising
+    sos: float = 0.0             # schedule adjustment: 1 = fully adjust each game's shots for the opponent's strength
     zone_weight: float = 1.0     # weight on games played in a different zone (fwd/mid/back) to this week's named one; 1 = ignore role
 
 
@@ -186,7 +187,14 @@ class Engine:
         return df
 
     # --- update with a completed team-game
-    def update_team(self, team, opp, is_home, weather, players: pd.DataFrame, opp_shots):
+    def ratings(self, team):
+        """(attack, defence) relative to league average, shrunk."""
+        p, lg = self.p, self.lg_avg_shots()
+        att = (self.t_for[team] + p.k_team * lg) / (self.t_n[team] + p.k_team) / lg
+        dfn = (self.t_against[team] + p.k_team * lg) / (self.t_n[team] + p.k_team) / lg
+        return att, dfn
+
+    def update_team(self, team, opp, is_home, weather, players: pd.DataFrame, opp_shots, opp_att=1.0, opp_def=1.0):
         p = self.p
         ts = players["shots"].sum()
         for r in players.itertuples(index=False):
@@ -210,8 +218,9 @@ class Engine:
             self.lg_goals += r.goals
             self.lg_shot_total += r.shots
         d = p.team_decay
-        self.t_for[team] = d * self.t_for[team] + ts
-        self.t_against[team] = d * self.t_against[team] + opp_shots
+        # schedule-adjusted: shots against a leaky defence count for less, against a tight one for more
+        self.t_for[team] = d * self.t_for[team] + ts / (opp_def ** p.sos)
+        self.t_against[team] = d * self.t_against[team] + opp_shots / (opp_att ** p.sos)
         self.t_n[team] = d * self.t_n[team] + 1
         self.lg_shots = p.lg_decay * self.lg_shots + ts
         self.lg_team_games = p.lg_decay * self.lg_team_games + 1
@@ -255,11 +264,12 @@ def walk_forward(pm: pd.DataFrame, p: Params):
             preds.append(df)
         out.extend(preds)
         shots = {t: g.loc[g["teamId"] == t, "shots"].sum() for t in teams}
+        snap = {t: eng.ratings(t) for t in teams}
         for t in teams:
             tg = g[g["teamId"] == t]
             o = [x for x in teams if x != t][0]
             r0 = tg.iloc[0]
-            eng.update_team(t, o, r0.is_home, r0.weather, tg, shots[o])
+            eng.update_team(t, o, r0.is_home, r0.weather, tg, shots[o], opp_att=snap[o][0], opp_def=snap[o][1])
     res = pd.concat(out, ignore_index=True)
     res["p1"] = p_at_least(res["lam"], 1, p.nb_size)
     res["p2"] = p_at_least(res["lam"], 2, p.nb_size)

@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 
 from model import load
-from model_disp import DParams, walk_forward, nll, p_at_least, LINES
+from model_disp import DParams, walk_forward, nll, p_at_least, adjust, size_for, LINES
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "output")
@@ -51,7 +51,7 @@ def calibration(res, seasons, r):
     c = sub(res, seasons)
     rows = []
     for L in LINES:
-        pr = p_at_least(c["d_mu"], L, r)
+        pr = p_at_least(c["d_mu"], L, c["d_size"])
         rows.append(pd.DataFrame({"line": L, "p": pr, "hit": (c["disposals"] >= L).astype(int)}))
     a = pd.concat(rows)
     a["bucket"] = pd.cut(a["p"], [0, .1, .2, .3, .4, .5, .6, .7, .8, .9, 1], include_lowest=True)
@@ -59,10 +59,32 @@ def calibration(res, seasons, r):
     return t
 
 
+def fit_calibration(pm, p):
+    """On the tuning seasons only: fit how the spread of outcomes changes with expected disposals,
+    and how much to stretch high-volume players (shrinkage pulls them down too far)."""
+    p.recal_g, p.var_c = 0.0, ()
+    res, _ = walk_forward(pm, p)
+    t = sub(res, TUNE)
+    raw = t["d_mu_raw"]
+    best = None
+    for g in (0.0, 0.03, 0.05, 0.08, 0.1, 0.15):
+        p.recal_g = g
+        m = adjust(raw, p)
+        grp = pd.DataFrame({"m": m, "y": t["disposals"]}).groupby(pd.cut(m, np.arange(0, 42, 2)), observed=True)\
+            .agg(m=("m", "mean"), v=("y", "var"), n=("y", "size"))
+        grp = grp[grp["n"] >= 20]
+        p.var_c = tuple(float(x) for x in np.polyfit(grp["m"], grp["v"], 2, w=np.sqrt(grp["n"])))
+        s = nll(m, t["disposals"], size_for(m, p))
+        if best is None or s < best[0]:
+            best = (s, g, p.var_c)
+    _, p.recal_g, p.var_c = best
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-tune", action="store_true")
     ap.add_argument("--iters", type=int, default=30)
+    ap.add_argument("--refit-calibration", action="store_true")
     a = ap.parse_args()
     os.makedirs(OUT, exist_ok=True)
     pm, _ = load()
@@ -70,6 +92,9 @@ def main():
     pf = os.path.join(HERE, "disp_params.json")
     if a.no_tune and os.path.exists(pf):
         p = DParams(**json.load(open(pf)))
+        if a.refit_calibration:
+            fit_calibration(pm, p)
+            json.dump(asdict(p), open(pf, "w"), indent=2)
     else:
         rng = random.Random(7)
         space = {"player_decay": [0.85, 0.9, 0.93, 0.96], "season_carry": [0.4, 0.6, 0.8],
@@ -86,17 +111,18 @@ def main():
                 best = (s, p)
             print(f"[{i+1}/{len(cands)}] nll={s:.5f} best={best[0]:.5f}")
         p = best[1]
+        fit_calibration(pm, p)
         json.dump(asdict(p), open(pf, "w"), indent=2)
     print("Params:", asdict(p))
     res, _ = walk_forward(pm, p)
     rep = {"params": asdict(p)}
     for name, seas in (("tune", TUNE), ("test", test)):
         s = sub(res, seas)
-        rep[name] = {"model": {"nll": nll(s["d_mu"], s["disposals"], p.nb_size),
+        rep[name] = {"model": {"nll": nll(s["d_mu"], s["disposals"], s["d_size"]),
                                "mae": float(np.mean(np.abs(s["d_mu"] - s["disposals"]))),
                                "mean_pred": float(s["d_mu"].mean()), "mean_act": float(s["disposals"].mean())},
                      "baselines": baselines(pm, seas)}
-    cal = calibration(res, test, p.nb_size)
+    cal = calibration(res, test, None)
     cal.to_csv(os.path.join(OUT, "disp_calibration.csv"), index=False)
     json.dump(rep, open(os.path.join(OUT, "disp_report.json"), "w"), indent=2, default=str)
     print(json.dumps(rep, indent=2, default=str))

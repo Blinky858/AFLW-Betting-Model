@@ -75,6 +75,9 @@ tbody tr:hover{background:var(--surface-2)}
 .edge-neg{color:var(--bad)}
 .muted{color:var(--text-3)}
 .note{font-size:13px;color:var(--text-2);margin-top:12px}
+.market{background:var(--surface-2);border-radius:10px;padding:10px 12px;margin:0 0 12px;display:grid;gap:8px;font-size:13px}
+.mrow{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
+.mlab{font-weight:650;min-width:84px}
 .stake{display:block;font-size:12px;color:var(--text-2);margin-top:3px}
 .fairsub{display:block;font-size:11px;color:var(--text-3);margin-top:2px;text-align:center}
 input.w-line{width:62px}
@@ -143,11 +146,12 @@ svg text{fill:var(--text-3);font-size:11px}
     <div class="card prose">
       <h2>How the model works</h2>
       <p><b>Expected goals = team's expected shots × player's share of shots × player's accuracy.</b></p>
-      <p><b>Team shots</b> come from the team's recent shots for, the opponent's recent shots conceded, and home ground. <b>Share</b> is the player's recent share of her team's shots, pulled toward the average for the position she's named in. The 21 named players' shares add up to 100%, so a missing forward's shots go to whoever replaces her. <b>Accuracy</b> is goals ÷ shots, pulled toward the league rate of about 41%. Goals follow a negative binomial distribution, which gives the 1+, 2+ and 3+ probabilities.</p>
+      <p><b>Team shots</b> come from the team's recent shots for, the opponent's recent shots conceded, and home ground. Both are adjusted for who each team has played, so shots against a leaky defence count for less. <b>Share</b> is the player's recent share of her team's shots, pulled toward the average for the position she's named in. The 21 named players' shares add up to 100%, so a missing forward's shots go to whoever replaces her. <b>Accuracy</b> is goals ÷ shots, pulled toward the league rate of about 41%. Goals follow a negative binomial distribution, which gives the 1+, 2+ and 3+ probabilities.</p>
       <p><b>Disposals:</b> expected disposals = her disposals per full game on the ground (recent games weighted more, pulled toward her position's average) × her expected time on ground × how many disposals the opponent usually gives up. Measuring disposals per minute on the ground means a game cut short by injury doesn't drag her numbers down. Counts follow a negative binomial distribution, which gives the chance of going over any line.</p>
       <p>Data comes from the AFL's official stats feed. The site rebuilds itself automatically every few hours: results update after each round, and lineups update once clubs name their teams (usually Thursday).</p>
       <h2 style="margin-top:16px">Using it</h2>
       <p>Enter a bookie's price next to a player. <b>Edge</b> = model probability × odds − 1. Only bets with an edge of 10% or more are flagged, because the model has error and the bookie may know something it doesn't (late outs, role changes). The suggested stake is a quarter of what the Kelly formula recommends, capped at 2% of your bank.</p>
+      <p><b>Scaling to the market:</b> each match card shows the model's expected score. If you enter the bookie's head-to-head line and total, each team's expected goals are scaled to match the market's expected score, and the goalkicker odds update. Disposal odds aren't scaled, because disposal counts barely move with the scoreline.</p>
       <p><b>Before teams are named, the odds use each side's last lineup.</b> Check that the match card shows "Teams named" before you bet.</p>
       <p><b>This model hasn't yet shown an edge against bookies.</b> It beats simple methods, but beating the bookie is the real test. Log the odds you take and the closing odds. Consistently beating the closing price is the evidence to look for.</p>
     </div>
@@ -184,17 +188,16 @@ svg text{fill:var(--text-3);font-size:11px}
             dmode:store.get('dmode','line'),dms:store.get('dms',15),all:false,bank:store.get('bank',100)};
   if(!['p1','p2','p3'].includes(st.gk))st.gk='p1';
   if(st.match>=DATA.matches.length)st.match=0;
-  const R=S.d_size||30;
 
   // negative binomial: P(X >= k) and P(X = k)
-  function nbPmfs(mu,kmax){const p=R/(R+mu),q=mu/(R+mu);const out=[Math.pow(p,R)];for(let k=0;k<kmax;k++)out.push(out[k]*(k+R)/(k+1)*q);return out}
-  function nbSF(mu,k){if(k<=0)return 1;const pm=nbPmfs(mu,k-1);let c=0;for(let i=0;i<k;i++)c+=pm[i];return Math.max(0,1-c)}
-  function nbPmf(mu,k){return k<0?0:nbPmfs(mu,k)[k]}
+  function nbPmfs(mu,kmax,R){const p=R/(R+mu),q=mu/(R+mu);const out=[Math.pow(p,R)];for(let k=0;k<kmax;k++)out.push(out[k]*(k+R)/(k+1)*q);return out}
+  function nbSF(mu,k,R){if(k<=0)return 1;const pm=nbPmfs(mu,k-1,R);let c=0;for(let i=0;i<k;i++)c+=pm[i];return Math.max(0,1-c)}
+  function nbPmf(mu,k,R){return k<0?0:nbPmfs(mu,k,R)[k]}
   // a line bet: returns {win, push} for side over/under at a line (handles whole-number lines with pushes)
-  function lineProbs(mu,line,side){
+  function lineProbs(mu,line,side,R){
     const whole=Math.abs(line-Math.round(line))<1e-9;
-    const over=whole?nbSF(mu,line+1):nbSF(mu,Math.ceil(line));
-    const push=whole?nbPmf(mu,line):0;
+    const over=whole?nbSF(mu,line+1,R):nbSF(mu,Math.ceil(line),R);
+    const push=whole?nbPmf(mu,line,R):0;
     return side==='over'?{win:over,push}:{win:1-over-push,push};
   }
   const fairFrom=(w,pu)=>w>0?((1-pu)/w):Infinity; // fair decimal odds ignoring pushes
@@ -231,13 +234,31 @@ svg text{fill:var(--text-3);font-size:11px}
       el('div',{},[el('h2',{class:'match-title',text:`${m.home} v ${m.away}`}),
         el('div',{class:'meta',text:[d.toLocaleString(undefined,{weekday:'short',day:'numeric',month:'short',hour:'numeric',minute:'2-digit'}),m.venue,m.weather].filter(Boolean).join(' · ')}),teamBadges]),
     ]));
+    // ---- market anchor: model expected score, optional bookie line + total
+    const PPS=S.pts_per_shot||2.9,TH=m.teams[m.home],TA=m.teams[m.away];
+    const modH=TH.xs*PPS,modA=TA.xs*PPS;
+    const mkey=`mkt:${DATA.season}:${DATA.round}:${m.id}`,mk=store.get(mkey,{line:'',total:''});
+    const fac={[m.home]:1,[m.away]:1};let anchored=false;
+    const ln=parseFloat(mk.line),tot=parseFloat(mk.total);
+    if(isFinite(ln)&&isFinite(tot)&&tot>0){const mh=(tot-ln)/2,ma=tot-mh;if(mh>0&&ma>0){fac[m.home]=mh/modH;fac[m.away]=ma/modA;anchored=true}}
+    const lineI=el('input',{type:'number',step:'0.5',placeholder:(modA-modH).toFixed(1),value:mk.line,'aria-label':`${m.home} line`});
+    const totI=el('input',{type:'number',step:'0.5',placeholder:(modH+modA).toFixed(1),value:mk.total,'aria-label':'Total points'});
+    const saveMk=()=>{store.set(mkey,{line:lineI.value,total:totI.value});render()};
+    lineI.addEventListener('change',saveMk);totI.addEventListener('change',saveMk);
+    const clr=el('button',{class:'showall',style:'padding:0',onclick:()=>{store.set(mkey,{line:'',total:''});render()}},'Clear');
+    box.append(el('div',{class:'market'},[
+      el('div',{class:'mrow'},[el('span',{class:'mlab',text:'Model score'}),el('span',{text:`${short(m.home)} ${modH.toFixed(0)} – ${modA.toFixed(0)} ${short(m.away)}`}),
+        el('span',{class:'muted',text:`(${short(modH>=modA?m.home:m.away)} by ${Math.abs(modH-modA).toFixed(0)}, total ${(modH+modA).toFixed(0)})`})]),
+      el('div',{class:'mrow'},[el('span',{class:'mlab',text:'Bookie'}),el('label',{class:'inline'},[`${short(m.home)} line`,lineI]),el('label',{class:'inline'},['Total',totI]),
+        anchored?el('span',{class:'badge b-good',text:`✓ Goals scaled to market: ${short(m.home)} ×${fac[m.home].toFixed(2)}, ${short(m.away)} ×${fac[m.away].toFixed(2)}`}):el('span',{class:'muted',text:'Enter the head-to-head line and total to scale goalkicker odds to the market'}),
+        anchored?clr:null])]));
     const bank=el('input',{type:'number',min:'0',step:'10',value:st.bank,'aria-label':'Bank'});
     bank.addEventListener('change',()=>{st.bank=Math.max(0,+bank.value||0);store.set('bank',st.bank);render()});
     const ctr=el('div',{class:'controls'},[segOf([['goals','Goalkickers'],['disp','Disposals']],st.market,k=>{st.market=k;st.all=false;store.set('market',k)})]);
     if(st.market==='goals')ctr.append(segOf([['p1','1+'],['p2','2+'],['p3','3+']],st.gk,k=>{st.gk=k;store.set('mkt',k)}));
     else{
       ctr.append(segOf([['line','Over/under'],['ms','Milestones']],st.dmode,k=>{st.dmode=k;store.set('dmode',k)}));
-      if(st.dmode==='ms')ctr.append(segOf([[10,'10+'],[15,'15+'],[20,'20+'],[25,'25+']],st.dms,k=>{st.dms=k;store.set('dms',k)}));
+      if(st.dmode==='ms')ctr.append(segOf([[10,'10+'],[15,'15+'],[20,'20+'],[25,'25+'],[30,'30+'],[35,'35+']],st.dms,k=>{st.dms=k;store.set('dms',k)}));
     }
     ctr.append(el('label',{class:'inline'},['Bank $',bank]));
     box.append(ctr);
@@ -245,8 +266,8 @@ svg text{fill:var(--text-3);font-size:11px}
     if(st.market==='disp'&&st.dmode==='line')return renderLines(box,m);
     // probability tables: goalkicker 1+/2+/3+, or disposal milestones
     let prob,expTxt,expLab,mid,thr;
-    if(st.market==='goals'){const k=st.gk;prob=r=>r[k];expTxt=r=>r.lam.toFixed(2);expLab='Exp. goals';mid=k;thr=k==='p1'?0.05:k==='p2'?0.03:0.02}
-    else{const L=st.dms;prob=r=>nbSF(r.dm,L);expTxt=r=>r.dm.toFixed(1);expLab='Exp. disp.';mid='d'+L;thr=0.03}
+    if(st.market==='goals'){const k=st.gk,kk=+k.slice(1),G=S.g_size||5;prob=r=>anchored?nbSF(r.lam*fac[r.t],kk,G):r[k];expTxt=r=>(r.lam*fac[r.t]).toFixed(2);expLab='Exp. goals';mid=k;thr=k==='p1'?0.05:k==='p2'?0.03:0.02}
+    else{const L=st.dms;prob=r=>nbSF(r.dm,L,r.dr||S.d_size||30);expTxt=r=>r.dm.toFixed(1);expLab='Exp. disp.';mid='d'+L;thr=0.03}
     let rows=m.players.map(r=>({r,p:prob(r)})).sort((a,b)=>b.p-a.p);
     const hiddenN=rows.filter(x=>x.p<thr).length;if(!st.all)rows=rows.filter(x=>x.p>=thr);
     const tb=el('tbody');
@@ -274,7 +295,7 @@ svg text{fill:var(--text-3);font-size:11px}
       const upd=()=>{
         store.set(base+':line',lineI.value);store.set(base+':o',oI.value);store.set(base+':u',uI.value);
         const L=parseFloat(lineI.value);if(!(L>=0)){fo.textContent=fu.textContent='';eC.replaceChildren();return}
-        const O=lineProbs(r.dm,L,'over'),U=lineProbs(r.dm,L,'under');
+        const RR=r.dr||S.d_size||30,O=lineProbs(r.dm,L,'over',RR),U=lineProbs(r.dm,L,'under',RR);
         fo.textContent='fair '+fairFrom(O.win,O.push).toFixed(2);fu.textContent='fair '+fairFrom(U.win,U.push).toFixed(2);
         const oo=parseFloat(oI.value),uo=parseFloat(uI.value);
         const eo=edgeOf(O.win,O.push,oo),eu=edgeOf(U.win,U.push,uo);
@@ -355,7 +376,7 @@ svg text{fill:var(--text-3);font-size:11px}
         barCard('Average miss (disposals, lower is better)',`How far the prediction was from the actual count, ${DT.season}, out of sample (${DT.n.toLocaleString()} player-games).`,
           [['This model',mae.model,true],['Raw season average',mae.naive],['Position average',mae.position]],v=>v.toFixed(2)),
         el('div',{class:'card kpi',style:'margin-top:12px'},[el('div',{class:'v',text:pct(DT.within3)}),el('div',{class:'l',text:'Predictions within 3 disposals of the actual count'})])]),
-      el('div',{class:'card'},[el('h2',{text:'Calibration'}),el('div',{class:'meta',text:'Across the 10+, 15+, 20+ and 25+ lines: when the model says 60%, does the player get there 60% of the time?'}),
+      el('div',{class:'card'},[el('h2',{text:'Calibration'}),el('div',{class:'meta',text:'Across the 10+ to 35+ lines: when the model says 60%, does the player get there 60% of the time?'}),
         ...calChart(DT.calib,'Model chance of reaching the line','Actually reached it',c=>`Rated ${pct(c.lo)}–${pct(c.hi)}: ${c.n} player-lines. Model said ${pct(c.pred)} on average, and ${pct(c.act)} got there.`)])]));
   }
 })();
