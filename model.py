@@ -37,6 +37,8 @@ POS_GROUP = {
     "INT": "BENCH", "SUB": "BENCH", "EMERG": "BENCH",
 }
 WET = {"RAIN", "THUNDERSTORMS"}
+ZONE = {"KEY_FWD": "FWD", "FWD_POCKET": "FWD", "HALF_FWD": "FWD", "MID": "MID", "RUCK": "MID",
+        "BACK": "BACK", "BENCH": "BENCH"}
 
 
 @dataclass
@@ -50,6 +52,7 @@ class Params:
     nb_size: float = 8.0         # negative binomial size (dispersion); large = Poisson
     lg_decay: float = 0.995      # recency weighting of the league-average shots per team-game
     share_power: float = 1.0     # >1 sharpens differences between players' shares before re-normalising
+    zone_weight: float = 1.0     # weight on games played in a different zone (fwd/mid/back) to this week's named one; 1 = ignore role
 
 
 # ----------------------------------------------------------------------------- data
@@ -88,6 +91,9 @@ class Engine:
         self.pl_n = defaultdict(float)
         self.pl_goals = defaultdict(float)
         self.pl_shots = defaultdict(float)
+        # per-zone decayed share sums, so games in a different role can count for less
+        self.pl_zshare = defaultdict(lambda: defaultdict(float))
+        self.pl_zn = defaultdict(lambda: defaultdict(float))
         self.pl_games = defaultdict(int)
         self.pl_name, self.pl_team, self.pl_pos = {}, {}, {}
         # team state
@@ -130,6 +136,10 @@ class Engine:
     def new_season(self, season):
         if self.season is not None and season != self.season:
             c = self.p.season_carry
+            for z in (self.pl_zshare, self.pl_zn):
+                for k in z:
+                    for zz in z[k]:
+                        z[k][zz] *= c
             for d in (self.pl_share, self.pl_n, self.pl_goals, self.pl_shots,
                       self.t_for, self.t_against, self.t_n):
                 for k in d:
@@ -154,7 +164,16 @@ class Engine:
         for pid, pos in lineup:
             g = POS_GROUP.get(pos, "BENCH")
             prior = self.pos_prior(g)
-            raw = (self.pl_share[pid] + p.k_share * prior) / (self.pl_n[pid] + p.k_share)
+            if p.zone_weight < 1.0:
+                zn = ZONE[g]
+                s_sum = n_sum = 0.0
+                for z, v in self.pl_zshare[pid].items():
+                    w = 1.0 if (z == zn or z == "BENCH" or zn == "BENCH") else p.zone_weight
+                    s_sum += w * v
+                    n_sum += w * self.pl_zn[pid][z]
+                raw = (s_sum + p.k_share * prior) / (n_sum + p.k_share)
+            else:
+                raw = (self.pl_share[pid] + p.k_share * prior) / (self.pl_n[pid] + p.k_share)
             acc = (self.pl_goals[pid] + p.k_acc * lg_acc) / (self.pl_shots[pid] + p.k_acc)
             rows.append((pid, pos, g, raw, acc, self.pl_games[pid]))
         df = pd.DataFrame(rows, columns=["playerId", "position", "pos_group", "raw_share", "acc", "games_hist"])
@@ -177,6 +196,12 @@ class Engine:
             self.pl_n[pid] = d * self.pl_n[pid] + 1
             self.pl_goals[pid] = d * self.pl_goals[pid] + r.goals
             self.pl_shots[pid] = d * self.pl_shots[pid] + r.shots
+            zn = ZONE[POS_GROUP.get(r.position, "BENCH")]
+            for z in list(self.pl_zshare[pid].keys()) + [zn]:
+                self.pl_zshare[pid][z] *= d
+                self.pl_zn[pid][z] *= d
+            self.pl_zshare[pid][zn] += r.share
+            self.pl_zn[pid][zn] += 1
             self.pl_games[pid] += 1
             self.pl_name[pid], self.pl_team[pid], self.pl_pos[pid] = r.name, team, r.position
             g = POS_GROUP.get(r.position, "BENCH")

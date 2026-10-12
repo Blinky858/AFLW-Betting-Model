@@ -7,5 +7,6 @@
   "k_acc": 10,
   "nb_size": 5,
   "share_power": 1.1,
-  "lg_decay": 0.998
+  "lg_decay": 0.998,
+  "zone_weight": 0.5
 }
