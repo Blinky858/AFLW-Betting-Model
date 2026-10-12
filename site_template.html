@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AFLW Goalkicker Model</title>
+<style>
+:root{
+  color-scheme:light;
+  --bg:#f6f6f4;--surface:#fcfcfb;--surface-2:#f0efec;--border:#e2e1dc;
+  --text:#0b0b0b;--text-2:#52514e;--text-3:#7a7974;
+  --accent:#2a78d6;--accent-soft:#e3eefb;
+  --good:#0a7a33;--good-soft:#e2f4e8;--bad:#b8322f;--bad-soft:#fbe9e8;--warn:#9a6400;--warn-soft:#fdf1d8;
+  --series-1:#2a78d6;--grid:#e6e5e0;
+  --radius:12px;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --bg:#121211;--surface:#1a1a19;--surface-2:#242422;--border:#33332f;
+    --text:#f0efec;--text-2:#c3c2b7;--text-3:#8f8e86;
+    --accent:#3987e5;--accent-soft:#1d2b3d;
+    --good:#4cc477;--good-soft:#16301f;--bad:#f07a77;--bad-soft:#3a1d1c;--warn:#e0a63a;--warn-soft:#352a12;
+    --series-1:#3987e5;--grid:#2c2c29;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#121211;--surface:#1a1a19;--surface-2:#242422;--border:#33332f;
+  --text:#f0efec;--text-2:#c3c2b7;--text-3:#8f8e86;
+  --accent:#3987e5;--accent-soft:#1d2b3d;
+  --good:#4cc477;--good-soft:#16301f;--bad:#f07a77;--bad-soft:#3a1d1c;--warn:#e0a63a;--warn-soft:#352a12;
+  --series-1:#3987e5;--grid:#2c2c29;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1040px;margin:0 auto;padding:20px 16px 64px}
+header{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+h1{font-size:22px;margin:0;letter-spacing:-.01em}
+.sub{color:var(--text-2);font-size:13px;margin-top:2px}
+.tabs{display:flex;gap:4px;background:var(--surface-2);padding:4px;border-radius:10px}
+.tab{border:0;background:transparent;color:var(--text-2);padding:7px 14px;border-radius:7px;font:inherit;font-size:14px;cursor:pointer}
+.tab[aria-selected="true"]{background:var(--surface);color:var(--text);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px}
+.chips{display:flex;gap:6px;overflow-x:auto;padding-bottom:6px;margin-bottom:12px;scrollbar-width:thin}
+.chip{flex:0 0 auto;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:999px;padding:6px 12px;font:inherit;font-size:13px;cursor:pointer;white-space:nowrap}
+.chip[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+.match-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-start;margin-bottom:12px}
+.match-title{font-size:19px;font-weight:650;margin:0}
+.meta{color:var(--text-2);font-size:13px}
+.teams{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.badge{display:inline-flex;align-items:center;gap:5px;font-size:12px;padding:3px 9px;border-radius:999px;font-weight:550}
+.b-good{background:var(--good-soft);color:var(--good)}
+.b-warn{background:var(--warn-soft);color:var(--warn)}
+.b-bad{background:var(--bad-soft);color:var(--bad)}
+.b-mute{background:var(--surface-2);color:var(--text-2)}
+.controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:4px 0 12px}
+.seg{display:inline-flex;background:var(--surface-2);border-radius:8px;padding:3px}
+.seg button{border:0;background:transparent;color:var(--text-2);font:inherit;font-size:13px;padding:5px 12px;border-radius:6px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--surface);color:var(--text);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+label.inline{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--text-2)}
+input[type=number],input[type=text]{font:inherit;font-size:14px;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:5px 8px;width:76px}
+input:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:transparent}
+.tbl-wrap{overflow-x:auto;margin:0 -16px;padding:0 16px}
+table{width:100%;border-collapse:collapse;font-size:14px;font-variant-numeric:tabular-nums}
+th{font-size:12px;font-weight:550;color:var(--text-3);text-align:right;padding:6px 8px;border-bottom:1px solid var(--border);white-space:nowrap}
+td{padding:7px 8px;border-bottom:1px solid var(--border);text-align:right;white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+tbody tr:hover{background:var(--surface-2)}
+.pname{font-weight:550}
+.pteam{color:var(--text-3);font-size:12px;display:block}
+.fair{font-weight:650}
+.edge-pos{color:var(--good);font-weight:650}
+.edge-neg{color:var(--bad)}
+.muted{color:var(--text-3)}
+.note{font-size:13px;color:var(--text-2);margin-top:12px}
+.showall{background:none;border:0;color:var(--accent);font:inherit;font-size:13px;cursor:pointer;padding:8px 0}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:12px}
+.kpi .v{font-size:26px;font-weight:650;letter-spacing:-.01em}
+.kpi .l{font-size:12px;color:var(--text-2)}
+h2{font-size:16px;margin:0 0 4px}
+h3{font-size:14px;margin:0 0 8px}
+.bars .row{display:grid;grid-template-columns:150px 1fr 56px;gap:10px;align-items:center;margin:8px 0;font-size:13px}
+.bars .track{height:10px;background:var(--surface-2);border-radius:5px;overflow:hidden}
+.bars .fill{height:100%;background:var(--text-3);border-radius:0 4px 4px 0}
+.bars .row.me .fill{background:var(--series-1)}
+.bars .row.me{font-weight:650}
+svg text{fill:var(--text-3);font-size:11px}
+.tip{position:fixed;pointer-events:none;background:var(--text);color:var(--surface);font-size:12px;padding:6px 8px;border-radius:6px;opacity:0;transition:opacity .1s;z-index:10;max-width:220px}
+.hit{color:var(--good);font-weight:650}
+.miss{color:var(--text-3)}
+.prose p{margin:0 0 10px;color:var(--text-2)}
+.prose b{color:var(--text)}
+.hidden{display:none!important}
+@media (max-width:640px){
+  .hide-sm{display:none}
+  .grid2,.kpis{grid-template-columns:1fr}
+  .bars .row{grid-template-columns:110px 1fr 50px}
+  td,th{padding:7px 5px}
+}
+@media (max-width:480px){
+  .hide-xs{display:none}
+  td:first-child{white-space:normal}
+  input[type=number]{width:62px;padding:5px 6px}
+  .tbl-wrap{margin:0 -8px;padding:0 8px}
+  .card{padding:14px 12px}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>AFLW Goalkicker Model</h1>
+      <div class="sub" id="sub"></div>
+    </div>
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" data-tab="odds" aria-selected="true">Fair odds</button>
+      <button class="tab" role="tab" data-tab="track" aria-selected="false">Track record</button>
+      <button class="tab" role="tab" data-tab="how" aria-selected="false">How it works</button>
+    </div>
+  </header>
+
+  <section id="tab-odds">
+    <div class="chips" id="chips"></div>
+    <div class="card" id="match"></div>
+  </section>
+
+  <section id="tab-track" class="hidden"></section>
+
+  <section id="tab-how" class="hidden">
+    <div class="card prose">
+      <h2>How the model works</h2>
+      <p><b>Expected goals = team's expected shots × player's share of shots × player's accuracy.</b></p>
+      <p><b>Team shots</b> come from the team's recent shots for, the opponent's recent shots conceded, and home ground. <b>Share</b> is the player's recent share of her team's shots, pulled toward the average for the position she's named in. The 21 named players' shares add up to 100%, so a missing forward's shots go to whoever replaces her. <b>Accuracy</b> is goals ÷ shots, pulled toward the league rate of about 41%. Goals follow a negative binomial distribution, which gives the 1+, 2+ and 3+ probabilities.</p>
+      <p>Data comes from the AFL's official stats feed. The site rebuilds itself automatically every few hours: results update after each round, and lineups update once clubs name their teams (usually Thursday).</p>
+      <h2 style="margin-top:16px">Using it</h2>
+      <p>Enter a bookie's price next to a player. <b>Edge</b> = model probability × odds − 1. Only bets with an edge of 10% or more are flagged, because the model has error and the bookie may know something it doesn't (late outs, role changes). The suggested stake is a quarter of what the Kelly formula recommends, capped at 2% of your bank.</p>
+      <p><b>Before teams are named, the odds use each side's last lineup.</b> Check that the match card shows "Teams named" before you bet.</p>
+      <p><b>This model hasn't yet shown an edge against bookies.</b> It beats simple methods, but beating the bookie is the real test. Log the odds you take and the closing odds. Consistently beating the closing price is the evidence to look for.</p>
+    </div>
+  </section>
+</div>
+<div class="tip" id="tip"></div>
+
+<script>const DATA=/*__DATA__*/null;</script>
+<script>
+(function(){
+  const $=s=>document.querySelector(s);
+  const el=(tag,attrs={},kids=[])=>{const e=document.createElement(tag);for(const[k,v]of Object.entries(attrs)){if(k==='class')e.className=v;else if(k==='text')e.textContent=v;else if(k.startsWith('on'))e.addEventListener(k.slice(2),v);else e.setAttribute(k,v)}for(const c of[].concat(kids))if(c!=null)e.append(c.nodeType?c:document.createTextNode(c));return e};
+  const store={get(k,d){try{const v=localStorage.getItem('aflwgk:'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('aflwgk:'+k,JSON.stringify(v))}catch(e){}}};
+  const pct=x=>x==null?'–':(x*100).toFixed(x<0.1?1:0)+'%';
+  const odds=p=>p>0?(1/p).toFixed(2):'–';
+  const S=DATA.settings;
+
+  // header
+  const gen=new Date(DATA.generated);
+  const ago=Math.max(0,Math.round((Date.now()-gen)/60000));
+  const agoTxt=ago<60?ago+' min ago':ago<1440?Math.round(ago/60)+' h ago':Math.round(ago/1440)+' d ago';
+  $('#sub').textContent=(DATA.round?`${DATA.season} · Round ${DATA.round}`:`${DATA.season} · no upcoming games`)+` · updated ${agoTxt}`;
+
+  // tabs
+  document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
+    document.querySelectorAll('.tab').forEach(x=>x.setAttribute('aria-selected',x===t));
+    ['odds','track','how'].forEach(n=>$('#tab-'+n).classList.toggle('hidden',n!==t.dataset.tab));
+    store.set('tab',t.dataset.tab);
+  }));
+  const savedTab=store.get('tab','odds');document.querySelector(`.tab[data-tab="${savedTab}"]`)?.click();
+
+  // ---------- fair odds
+  const st={match:store.get('match:'+DATA.round,0),mkt:store.get('mkt','p1'),all:false,bank:store.get('bank',100)};
+  if(st.match>=DATA.matches.length)st.match=0;
+  const MK={p1:'1+ goal',p2:'2+ goals',p3:'3+ goals'};
+
+  function chips(){
+    const c=$('#chips');c.replaceChildren();
+    if(!DATA.matches.length){$('#match').replaceChildren(el('p',{class:'meta',text:'No upcoming games. The season may be over. Check back when the next fixture is released.'}));return}
+    DATA.matches.forEach((m,i)=>{
+      const d=new Date(m.kickoff.replace(' ','T').replace(/\+0000$/,'Z'));
+      c.append(el('button',{class:'chip','aria-pressed':i===st.match,onclick:()=>{st.match=i;st.all=false;store.set('match:'+DATA.round,i);chips();render()}},
+        `${short(m.home)} v ${short(m.away)} · ${d.toLocaleDateString(undefined,{weekday:'short'})}`));
+    });
+  }
+  const short=n=>n==='Western Bulldogs'?'Bulldogs':n.replace(/ (Crows|SUNS|Lions|Cats|Eagles|Swans|GIANTS)$/i,'').replace('North Melbourne','North').replace('Port Adelaide','Port');
+
+  function edgeOf(p,o){return o>1?p*o-1:null}
+  function stakeOf(p,o){if(!(o>1))return 0;const b=o-1,k=Math.max(0,(p*b-(1-p))/b)*S.kelly_fraction;return Math.min(k,S.max_stake_pct)*st.bank}
+
+  function render(){
+    const m=DATA.matches[st.match];if(!m)return;
+    const box=$('#match');box.replaceChildren();
+    const d=new Date(m.kickoff.replace(' ','T').replace(/\+0000$/,'Z'));
+    const teamBadges=el('div',{class:'teams'},Object.entries(m.teams).map(([t,v])=>
+      el('span',{class:'badge '+(v.named?'b-good':'b-warn')},`${v.named?'✓ Teams named':'⏳ Last week\'s lineup'} · ${short(t)} · ${v.xs} exp. shots`)));
+    box.append(el('div',{class:'match-head'},[
+      el('div',{},[el('h2',{class:'match-title',text:`${m.home} v ${m.away}`}),
+        el('div',{class:'meta',text:[d.toLocaleString(undefined,{weekday:'short',day:'numeric',month:'short',hour:'numeric',minute:'2-digit'}),m.venue,m.weather].filter(Boolean).join(' · ')}),teamBadges]),
+    ]));
+    const seg=el('div',{class:'seg'},Object.entries(MK).map(([k,l])=>el('button',{'aria-pressed':st.mkt===k,onclick:()=>{st.mkt=k;store.set('mkt',k);render()}},l)));
+    const bank=el('input',{type:'number',min:'0',step:'10',value:st.bank,'aria-label':'Bank'});
+    bank.addEventListener('change',()=>{st.bank=Math.max(0,+bank.value||0);store.set('bank',st.bank);render()});
+    box.append(el('div',{class:'controls'},[seg,el('label',{class:'inline'},['Bank $',bank])]));
+
+    const k=st.mkt,thr=k==='p1'?0.05:k==='p2'?0.03:0.02;
+    let rows=m.players.slice().sort((a,b)=>b[k]-a[k]);
+    const hiddenN=rows.filter(r=>r[k]<thr).length;
+    if(!st.all)rows=rows.filter(r=>r[k]>=thr);
+    const tb=el('tbody');
+    rows.forEach(r=>{
+      const key=`odds:${DATA.season}:${DATA.round}:${m.id}:${r.n}:${k}`;
+      const inp=el('input',{type:'number',step:'0.01',min:'1.01',placeholder:'odds','aria-label':`Bookie odds for ${r.n}`,value:store.get(key,'')});
+      const eC=el('td'),sC=el('td',{class:'hide-sm'});
+      const upd=()=>{const o=parseFloat(inp.value);store.set(key,inp.value);const e=edgeOf(r[k],o);
+        eC.replaceChildren();sC.textContent='';
+        if(e==null){eC.append(el('span',{class:'muted',text:'–'}));return}
+        if(e>=S.min_edge){eC.append(el('span',{class:'badge b-good',text:`✓ +${(e*100).toFixed(0)}%`}));sC.textContent='$'+stakeOf(r[k],o).toFixed(2)}
+        else eC.append(el('span',{class:e>=0?'muted':'edge-neg',text:(e>=0?'+':'')+(e*100).toFixed(0)+'%'}));};
+      inp.addEventListener('input',upd);upd();
+      tb.append(el('tr',{},[
+        el('td',{},[el('span',{class:'pname',text:r.n}),el('span',{class:'pteam',text:`${short(r.t)} · ${r.pos}${r.gp<5?' · '+r.gp+' games':''}`})]),
+        el('td',{class:'hide-sm',text:r.lam.toFixed(2)}),
+        el('td',{class:'hide-xs',text:pct(r[k])}),
+        el('td',{class:'fair',text:odds(r[k])}),
+        el('td',{},inp),eC,sC]));
+    });
+    box.append(el('div',{class:'tbl-wrap'},el('table',{},[
+      el('thead',{},el('tr',{},[el('th',{text:'Player'}),el('th',{class:'hide-sm',text:'Exp. goals'}),el('th',{class:'hide-xs',text:'Chance'}),el('th',{text:'Fair odds'}),el('th',{text:'Bookie'}),el('th',{text:'Edge'}),el('th',{class:'hide-sm',text:'Stake'})])),tb])));
+    if(hiddenN)box.append(el('button',{class:'showall',onclick:()=>{st.all=!st.all;render()}},st.all?'Show fewer':`Show all ${m.players.length} players`));
+    box.append(el('p',{class:'note',text:`Edge = chance × bookie odds − 1. Bets are flagged at +${S.min_edge*100}% or more. Stake = ¼ Kelly, capped at ${S.max_stake_pct*100}% of bank. Players with under 5 games in the system are marked, because their numbers lean heavily on positional averages.`}));
+  }
+  chips();render();
+
+  // ---------- track record
+  const T=DATA.track,tt=$('#tab-track');
+  if(!T){tt.append(el('div',{class:'card',text:'No completed games this season yet.'}))}
+  else{
+    const kp=el('div',{class:'kpis'},[
+      el('div',{class:'card kpi'},[el('div',{class:'v',text:T.games}),el('div',{class:'l',text:`${T.season} games predicted out of sample (${T.n.toLocaleString()} player-games)`})]),
+      el('div',{class:'card kpi'},[el('div',{class:'v',text:T.mean_pred.toFixed(2)+' / '+T.mean_act.toFixed(2)}),el('div',{class:'l',text:'Average goals per player: predicted / actual'})]),
+      el('div',{class:'card kpi'},[el('div',{class:'v',text:T.last.round_actual+' / '+T.last.round_expected}),el('div',{class:'l',text:`Round ${T.last.round}: goalkickers actual / expected`})]),
+    ]);
+    tt.append(kp);
+
+    // log loss bars
+    const ll=T.logloss,mx=Math.max(ll.model,ll.position,ll.naive);
+    const bar=(lab,v,me)=>el('div',{class:'row'+(me?' me':'')},[el('span',{text:lab}),el('div',{class:'track'},el('div',{class:'fill',style:`width:${(v/mx*100).toFixed(1)}%`})),el('span',{style:'text-align:right',text:v.toFixed(3)})]);
+    const llCard=el('div',{class:'card'},[el('h2',{text:'Prediction error (log loss, lower is better)'}),el('div',{class:'meta',text:`Anytime goalkicker, ${T.season}. Every game was predicted using only games played before it.`}),
+      el('div',{class:'bars'},[bar('This model',ll.model,true),bar('Position average',ll.position),bar('Raw goals per game',ll.naive)])]);
+
+    // calibration chart
+    const W=440,H=300,ml=54,mb=34,mt=10,mr=18,pw=W-ml-mr,ph=H-mt-mb;
+    const NS='http://www.w3.org/2000/svg',sv=(t,a)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);return e};
+    const svg=sv('svg',{viewBox:`0 0 ${W} ${H}`,width:'100%',role:'img','aria-label':'Calibration: predicted versus actual goalkicking rate'});
+    const x=v=>ml+v*pw,y=v=>mt+ph-v*ph;
+    for(let v=0;v<=1.001;v+=0.2){
+      svg.append(sv('line',{x1:ml,x2:ml+pw,y1:y(v),y2:y(v),stroke:'var(--grid)','stroke-width':1}));
+      const ty=sv('text',{x:ml-6,y:y(v)+4,'text-anchor':'end'});ty.textContent=Math.round(v*100)+'%';svg.append(ty);
+      const tx=sv('text',{x:x(v),y:H-mb+16,'text-anchor':'middle'});tx.textContent=Math.round(v*100)+'%';svg.append(tx);
+    }
+    svg.append(sv('line',{x1:x(0),y1:y(0),x2:x(1),y2:y(1),stroke:'var(--text-3)','stroke-width':1.5,'stroke-dasharray':'4 4'}));
+    const xl=sv('text',{x:ml+pw/2,y:H-2,'text-anchor':'middle'});xl.textContent='Model chance of 1+ goal';svg.append(xl);
+    const tip=$('#tip'),nmax=Math.max(...T.calib.map(c=>c.n));
+    const pts=sv('polyline',{points:T.calib.filter(c=>c.n>=20).map(c=>`${x(c.pred)},${y(c.act)}`).join(' '),fill:'none',stroke:'var(--series-1)','stroke-width':2});svg.append(pts);
+    T.calib.forEach(c=>{
+      const rr=4+6*Math.sqrt(c.n/nmax);
+      const g=sv('g',{});
+      g.append(sv('circle',{cx:x(c.pred),cy:y(c.act),r:rr+2,fill:'var(--surface)'}));
+      g.append(sv('circle',{cx:x(c.pred),cy:y(c.act),r:rr,fill:'var(--series-1)','fill-opacity':c.n<20?0.35:1}));
+      g.append(sv('circle',{cx:x(c.pred),cy:y(c.act),r:Math.max(rr+6,14),fill:'transparent'}));
+      g.style.cursor='default';
+      g.addEventListener('mousemove',e=>{tip.textContent=`Rated ${pct(c.lo)}–${pct(c.hi)}: ${c.n} players. Model said ${pct(c.pred)} on average, and ${pct(c.act)} kicked a goal.`;tip.style.left=Math.min(e.clientX+12,innerWidth-230)+'px';tip.style.top=(e.clientY+12)+'px';tip.style.opacity=1});
+      g.addEventListener('mouseleave',()=>tip.style.opacity=0);
+      svg.append(g);
+    });
+    const yl=sv('text',{x:10,y:mt+ph/2,'text-anchor':'middle',transform:`rotate(-90 10 ${mt+ph/2})`});yl.textContent='Actually kicked a goal';svg.append(yl);
+    const calTbl=el('table',{class:'hidden',style:'margin-top:8px'},[el('thead',{},el('tr',{},['Model rating','Players','Predicted','Actual'].map(h=>el('th',{text:h})))),
+      el('tbody',{},T.calib.map(c=>el('tr',{},[el('td',{text:`${pct(c.lo)}–${pct(c.hi)}`}),el('td',{text:c.n}),el('td',{text:pct(c.pred)}),el('td',{text:pct(c.act)})])))]);
+    const calCard=el('div',{class:'card'},[el('h2',{text:'Calibration'}),el('div',{class:'meta',text:'When the model says 40%, do 40% of those players kick a goal? Dots on the dashed line mean yes. Bigger dots are bigger samples.'}),svg,
+      el('button',{class:'showall',onclick:e=>{calTbl.classList.toggle('hidden');e.target.textContent=calTbl.classList.contains('hidden')?'Show as table':'Hide table'}},'Show as table'),calTbl]);
+    tt.append(el('div',{class:'grid2'},[llCard,calCard]));
+
+    // last round
+    const L=T.last;
+    const lt=el('tbody',{},L.top.map(r=>el('tr',{},[el('td',{},[el('span',{class:'pname',text:r.n}),el('span',{class:'pteam',text:`${short(r.t)} v ${short(r.o)}`})]),el('td',{text:pct(r.p1)}),el('td',{},el('span',{class:r.g>0?'hit':'miss',text:r.g>0?`✓ ${r.g} goal${r.g>1?'s':''}`:'✗ 0'}))])));
+    tt.append(el('div',{class:'card',style:'margin-top:12px'},[el('h2',{text:`Round ${L.round}: the model's 20 most likely goalkickers`}),
+      el('div',{class:'meta',text:`Expected ${L.top_expected} of them to kick a goal; ${L.top_actual} did. One round is mostly luck. The calibration chart above is the better guide.`}),
+      el('div',{class:'tbl-wrap'},el('table',{},[el('thead',{},el('tr',{},[el('th',{text:'Player'}),el('th',{text:'Model chance'}),el('th',{text:'Result'})])),lt]))]));
+  }
+})();
+</script>
+</body>
+</html>
