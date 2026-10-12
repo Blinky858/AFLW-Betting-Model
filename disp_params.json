@@ -1,0 +1,12 @@
+{
+  "player_decay": 0.85,
+  "season_carry": 0.6,
+  "k_rate": 1,
+  "k_tog": 2,
+  "team_decay": 0.9,
+  "k_team": 2,
+  "g_opp": 1.0,
+  "g_team": 0,
+  "lg_decay": 0.998,
+  "nb_size": 30
+}

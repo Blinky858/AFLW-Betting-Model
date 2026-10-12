@@ -1,6 +1,6 @@
-# AFLW goalkicker model
+# AFLW player model
 
-A self-updating website with fair odds for anytime (1+), 2+ and 3+ goalkicker markets, an odds checker, and the model's track record.
+A self-updating website with fair odds for goalkicker markets (1+, 2+, 3+) and disposal markets (over/under any line, plus 10+/15+/20+/25+), an odds checker, and the model's track record.
 
 ## Put the website online (about 10 minutes, free)
 
@@ -51,6 +51,12 @@ Expected goals = team's expected shots × player's share of team shots × player
 - **Goals:** modelled with a negative binomial distribution, which gives P(1+), P(2+) and P(3+).
 
 Every backtest prediction uses only games played before it. Tuned on 2023–25; 2026 is out of sample. In 2026 the model's log loss is 0.416, against 0.453 for position averages and 0.589 for raw goals per game.
+
+## Disposal model
+
+Expected disposals = disposals per full game on the ground (recent games weighted more, pulled toward her position's average) × expected time on ground × how many disposals the opponent usually concedes. Counts follow a negative binomial distribution, which gives P(over) for any line. Re-tune with `python backtest_disp.py` (about 5 minutes).
+
+Backtest, 2026 out of sample: average miss of 3.40 disposals, against 3.82 for a raw season average and 4.54 for a position average. Over/under probabilities are well calibrated across the 10+, 15+, 20+ and 25+ lines.
 
 ## Limits
 

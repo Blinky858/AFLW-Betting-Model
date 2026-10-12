@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AFLW Goalkicker Model</title>
+<title>AFLW Player Model</title>
 <style>
 :root{
   color-scheme:light;
@@ -75,6 +75,12 @@ tbody tr:hover{background:var(--surface-2)}
 .edge-neg{color:var(--bad)}
 .muted{color:var(--text-3)}
 .note{font-size:13px;color:var(--text-2);margin-top:12px}
+.stake{display:block;font-size:12px;color:var(--text-2);margin-top:3px}
+.fairsub{display:block;font-size:11px;color:var(--text-3);margin-top:2px;text-align:center}
+input.w-line{width:62px}
+.ou{display:flex;gap:8px;justify-content:flex-end}
+h2.sec{font-size:18px;margin:20px 0 10px}
+h2.sec:first-child{margin-top:0}
 .showall{background:none;border:0;color:var(--accent);font:inherit;font-size:13px;cursor:pointer;padding:8px 0}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}
 .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:12px}
@@ -103,8 +109,11 @@ svg text{fill:var(--text-3);font-size:11px}
 @media (max-width:480px){
   .hide-xs{display:none}
   td:first-child{white-space:normal}
-  input[type=number]{width:62px;padding:5px 6px}
+  input[type=number]{width:60px;padding:5px 4px;font-size:13px}
   .tbl-wrap{margin:0 -8px;padding:0 8px}
+  .ou{flex-direction:column;gap:4px;align-items:flex-end}
+  input.w-line{width:54px}
+  .pname{font-size:13px}
   .card{padding:14px 12px}
 }
 </style>
@@ -113,7 +122,7 @@ svg text{fill:var(--text-3);font-size:11px}
 <div class="wrap">
   <header>
     <div>
-      <h1>AFLW Goalkicker Model</h1>
+      <h1>AFLW Player Model</h1>
       <div class="sub" id="sub"></div>
     </div>
     <div class="tabs" role="tablist">
@@ -135,6 +144,7 @@ svg text{fill:var(--text-3);font-size:11px}
       <h2>How the model works</h2>
       <p><b>Expected goals = team's expected shots × player's share of shots × player's accuracy.</b></p>
       <p><b>Team shots</b> come from the team's recent shots for, the opponent's recent shots conceded, and home ground. <b>Share</b> is the player's recent share of her team's shots, pulled toward the average for the position she's named in. The 21 named players' shares add up to 100%, so a missing forward's shots go to whoever replaces her. <b>Accuracy</b> is goals ÷ shots, pulled toward the league rate of about 41%. Goals follow a negative binomial distribution, which gives the 1+, 2+ and 3+ probabilities.</p>
+      <p><b>Disposals:</b> expected disposals = her disposals per full game on the ground (recent games weighted more, pulled toward her position's average) × her expected time on ground × how many disposals the opponent usually gives up. Measuring disposals per minute on the ground means a game cut short by injury doesn't drag her numbers down. Counts follow a negative binomial distribution, which gives the chance of going over any line.</p>
       <p>Data comes from the AFL's official stats feed. The site rebuilds itself automatically every few hours: results update after each round, and lineups update once clubs name their teams (usually Thursday).</p>
       <h2 style="margin-top:16px">Using it</h2>
       <p>Enter a bookie's price next to a player. <b>Edge</b> = model probability × odds − 1. Only bets with an edge of 10% or more are flagged, because the model has error and the bookie may know something it doesn't (late outs, role changes). The suggested stake is a quarter of what the Kelly formula recommends, capped at 2% of your bank.</p>
@@ -170,9 +180,26 @@ svg text{fill:var(--text-3);font-size:11px}
   const savedTab=store.get('tab','odds');document.querySelector(`.tab[data-tab="${savedTab}"]`)?.click();
 
   // ---------- fair odds
-  const st={match:store.get('match:'+DATA.round,0),mkt:store.get('mkt','p1'),all:false,bank:store.get('bank',100)};
+  const st={match:store.get('match:'+DATA.round,0),market:store.get('market','goals'),gk:store.get('mkt','p1'),
+            dmode:store.get('dmode','line'),dms:store.get('dms',15),all:false,bank:store.get('bank',100)};
+  if(!['p1','p2','p3'].includes(st.gk))st.gk='p1';
   if(st.match>=DATA.matches.length)st.match=0;
-  const MK={p1:'1+ goal',p2:'2+ goals',p3:'3+ goals'};
+  const R=S.d_size||30;
+
+  // negative binomial: P(X >= k) and P(X = k)
+  function nbPmfs(mu,kmax){const p=R/(R+mu),q=mu/(R+mu);const out=[Math.pow(p,R)];for(let k=0;k<kmax;k++)out.push(out[k]*(k+R)/(k+1)*q);return out}
+  function nbSF(mu,k){if(k<=0)return 1;const pm=nbPmfs(mu,k-1);let c=0;for(let i=0;i<k;i++)c+=pm[i];return Math.max(0,1-c)}
+  function nbPmf(mu,k){return k<0?0:nbPmfs(mu,k)[k]}
+  // a line bet: returns {win, push} for side over/under at a line (handles whole-number lines with pushes)
+  function lineProbs(mu,line,side){
+    const whole=Math.abs(line-Math.round(line))<1e-9;
+    const over=whole?nbSF(mu,line+1):nbSF(mu,Math.ceil(line));
+    const push=whole?nbPmf(mu,line):0;
+    return side==='over'?{win:over,push}:{win:1-over-push,push};
+  }
+  const fairFrom=(w,pu)=>w>0?((1-pu)/w):Infinity; // fair decimal odds ignoring pushes
+  function edgeOf(w,pu,o){return o>1?w*o+pu-1:null}
+  function stakeOf(w,pu,o){if(!(o>1))return 0;const pc=w/(1-pu||1),b=o-1,k=Math.max(0,(pc*b-(1-pc))/b)*S.kelly_fraction*(1-pu);return Math.min(k,S.max_stake_pct)*st.bank}
 
   function chips(){
     const c=$('#chips');c.replaceChildren();
@@ -184,75 +211,92 @@ svg text{fill:var(--text-3);font-size:11px}
     });
   }
   const short=n=>n==='Western Bulldogs'?'Bulldogs':n.replace(/ (Crows|SUNS|Lions|Cats|Eagles|Swans|GIANTS)$/i,'').replace('North Melbourne','North').replace('Port Adelaide','Port');
-
-  function edgeOf(p,o){return o>1?p*o-1:null}
-  function stakeOf(p,o){if(!(o>1))return 0;const b=o-1,k=Math.max(0,(p*b-(1-p))/b)*S.kelly_fraction;return Math.min(k,S.max_stake_pct)*st.bank}
+  const segOf=(opts,cur,set)=>el('div',{class:'seg'},opts.map(([k,l])=>el('button',{'aria-pressed':cur===k,onclick:()=>{set(k);render()}},l)));
+  const edgeCell=(cell,w,pu,o,label)=>{
+    cell.replaceChildren();const e=edgeOf(w,pu,o);
+    if(e==null){cell.append(el('span',{class:'muted',text:'–'}));return}
+    const txt=(label?label+' ':'')+(e>=0?'+':'')+(e*100).toFixed(0)+'%';
+    if(e>=S.min_edge){cell.append(el('span',{class:'badge b-good',text:'✓ '+txt}),el('span',{class:'stake',text:'$'+stakeOf(w,pu,o).toFixed(2)}))}
+    else cell.append(el('span',{class:e>=0?'muted':'edge-neg',text:txt}));
+  };
+  const nameCell=r=>el('td',{},[el('span',{class:'pname',text:r.n}),el('span',{class:'pteam',text:`${short(r.t)} · ${r.pos}${r.gp<5?' · '+r.gp+' games':''}`})]);
 
   function render(){
     const m=DATA.matches[st.match];if(!m)return;
     const box=$('#match');box.replaceChildren();
     const d=new Date(m.kickoff.replace(' ','T').replace(/\+0000$/,'Z'));
     const teamBadges=el('div',{class:'teams'},Object.entries(m.teams).map(([t,v])=>
-      el('span',{class:'badge '+(v.named?'b-good':'b-warn')},`${v.named?'✓ Teams named':'⏳ Last week\'s lineup'} · ${short(t)} · ${v.xs} exp. shots`)));
+      el('span',{class:'badge '+(v.named?'b-good':'b-warn')},`${v.named?'✓ Teams named':'⏳ Last week\'s lineup'} · ${short(t)}`)));
     box.append(el('div',{class:'match-head'},[
       el('div',{},[el('h2',{class:'match-title',text:`${m.home} v ${m.away}`}),
         el('div',{class:'meta',text:[d.toLocaleString(undefined,{weekday:'short',day:'numeric',month:'short',hour:'numeric',minute:'2-digit'}),m.venue,m.weather].filter(Boolean).join(' · ')}),teamBadges]),
     ]));
-    const seg=el('div',{class:'seg'},Object.entries(MK).map(([k,l])=>el('button',{'aria-pressed':st.mkt===k,onclick:()=>{st.mkt=k;store.set('mkt',k);render()}},l)));
     const bank=el('input',{type:'number',min:'0',step:'10',value:st.bank,'aria-label':'Bank'});
     bank.addEventListener('change',()=>{st.bank=Math.max(0,+bank.value||0);store.set('bank',st.bank);render()});
-    box.append(el('div',{class:'controls'},[seg,el('label',{class:'inline'},['Bank $',bank])]));
+    const ctr=el('div',{class:'controls'},[segOf([['goals','Goalkickers'],['disp','Disposals']],st.market,k=>{st.market=k;st.all=false;store.set('market',k)})]);
+    if(st.market==='goals')ctr.append(segOf([['p1','1+'],['p2','2+'],['p3','3+']],st.gk,k=>{st.gk=k;store.set('mkt',k)}));
+    else{
+      ctr.append(segOf([['line','Over/under'],['ms','Milestones']],st.dmode,k=>{st.dmode=k;store.set('dmode',k)}));
+      if(st.dmode==='ms')ctr.append(segOf([[10,'10+'],[15,'15+'],[20,'20+'],[25,'25+']],st.dms,k=>{st.dms=k;store.set('dms',k)}));
+    }
+    ctr.append(el('label',{class:'inline'},['Bank $',bank]));
+    box.append(ctr);
 
-    const k=st.mkt,thr=k==='p1'?0.05:k==='p2'?0.03:0.02;
-    let rows=m.players.slice().sort((a,b)=>b[k]-a[k]);
-    const hiddenN=rows.filter(r=>r[k]<thr).length;
-    if(!st.all)rows=rows.filter(r=>r[k]>=thr);
+    if(st.market==='disp'&&st.dmode==='line')return renderLines(box,m);
+    // probability tables: goalkicker 1+/2+/3+, or disposal milestones
+    let prob,expTxt,expLab,mid,thr;
+    if(st.market==='goals'){const k=st.gk;prob=r=>r[k];expTxt=r=>r.lam.toFixed(2);expLab='Exp. goals';mid=k;thr=k==='p1'?0.05:k==='p2'?0.03:0.02}
+    else{const L=st.dms;prob=r=>nbSF(r.dm,L);expTxt=r=>r.dm.toFixed(1);expLab='Exp. disp.';mid='d'+L;thr=0.03}
+    let rows=m.players.map(r=>({r,p:prob(r)})).sort((a,b)=>b.p-a.p);
+    const hiddenN=rows.filter(x=>x.p<thr).length;if(!st.all)rows=rows.filter(x=>x.p>=thr);
     const tb=el('tbody');
-    rows.forEach(r=>{
-      const key=`odds:${DATA.season}:${DATA.round}:${m.id}:${r.n}:${k}`;
+    rows.forEach(({r,p})=>{
+      const key=`odds:${DATA.season}:${DATA.round}:${m.id}:${r.n}:${mid}`;
       const inp=el('input',{type:'number',step:'0.01',min:'1.01',placeholder:'odds','aria-label':`Bookie odds for ${r.n}`,value:store.get(key,'')});
-      const eC=el('td'),sC=el('td',{class:'hide-sm'});
-      const upd=()=>{const o=parseFloat(inp.value);store.set(key,inp.value);const e=edgeOf(r[k],o);
-        eC.replaceChildren();sC.textContent='';
-        if(e==null){eC.append(el('span',{class:'muted',text:'–'}));return}
-        if(e>=S.min_edge){eC.append(el('span',{class:'badge b-good',text:`✓ +${(e*100).toFixed(0)}%`}));sC.textContent='$'+stakeOf(r[k],o).toFixed(2)}
-        else eC.append(el('span',{class:e>=0?'muted':'edge-neg',text:(e>=0?'+':'')+(e*100).toFixed(0)+'%'}));};
-      inp.addEventListener('input',upd);upd();
-      tb.append(el('tr',{},[
-        el('td',{},[el('span',{class:'pname',text:r.n}),el('span',{class:'pteam',text:`${short(r.t)} · ${r.pos}${r.gp<5?' · '+r.gp+' games':''}`})]),
-        el('td',{class:'hide-sm',text:r.lam.toFixed(2)}),
-        el('td',{class:'hide-xs',text:pct(r[k])}),
-        el('td',{class:'fair',text:odds(r[k])}),
-        el('td',{},inp),eC,sC]));
+      const eC=el('td');const upd=()=>{store.set(key,inp.value);edgeCell(eC,p,0,parseFloat(inp.value))};inp.addEventListener('input',upd);upd();
+      tb.append(el('tr',{},[nameCell(r),el('td',{class:'hide-sm',text:expTxt(r)}),el('td',{class:'hide-xs',text:pct(p)}),el('td',{class:'fair',text:odds(p)}),el('td',{},inp),eC]));
     });
     box.append(el('div',{class:'tbl-wrap'},el('table',{},[
-      el('thead',{},el('tr',{},[el('th',{text:'Player'}),el('th',{class:'hide-sm',text:'Exp. goals'}),el('th',{class:'hide-xs',text:'Chance'}),el('th',{text:'Fair odds'}),el('th',{text:'Bookie'}),el('th',{text:'Edge'}),el('th',{class:'hide-sm',text:'Stake'})])),tb])));
+      el('thead',{},el('tr',{},[el('th',{text:'Player'}),el('th',{class:'hide-sm',text:expLab}),el('th',{class:'hide-xs',text:'Chance'}),el('th',{text:'Fair odds'}),el('th',{text:'Bookie'}),el('th',{text:'Edge · stake'})])),tb])));
     if(hiddenN)box.append(el('button',{class:'showall',onclick:()=>{st.all=!st.all;render()}},st.all?'Show fewer':`Show all ${m.players.length} players`));
-    box.append(el('p',{class:'note',text:`Edge = chance × bookie odds − 1. Bets are flagged at +${S.min_edge*100}% or more. Stake = ¼ Kelly, capped at ${S.max_stake_pct*100}% of bank. Players with under 5 games in the system are marked, because their numbers lean heavily on positional averages.`}));
+    box.append(el('p',{class:'note',text:`Edge = chance × bookie odds − 1. Flagged at +${S.min_edge*100}% or more. Stake = ¼ Kelly, capped at ${S.max_stake_pct*100}% of bank. Players with under 5 games in the system are marked, because their numbers lean heavily on positional averages.`}));
+  }
+
+  function renderLines(box,m){
+    const tb=el('tbody');
+    m.players.slice().sort((a,b)=>b.dm-a.dm).forEach(r=>{
+      const base=`odds:${DATA.season}:${DATA.round}:${m.id}:${r.n}:dl`;
+      const defLine=Math.max(0.5,Math.round(r.dm)-0.5);
+      const lineI=el('input',{type:'number',step:'0.5',min:'0',class:'w-line','aria-label':`Line for ${r.n}`,value:store.get(base+':line',defLine)});
+      const oI=el('input',{type:'number',step:'0.01',min:'1.01',placeholder:'over','aria-label':`Over odds for ${r.n}`,value:store.get(base+':o','')});
+      const uI=el('input',{type:'number',step:'0.01',min:'1.01',placeholder:'under','aria-label':`Under odds for ${r.n}`,value:store.get(base+':u','')});
+      const fo=el('span',{class:'fairsub'}),fu=el('span',{class:'fairsub'}),eC=el('td');
+      const upd=()=>{
+        store.set(base+':line',lineI.value);store.set(base+':o',oI.value);store.set(base+':u',uI.value);
+        const L=parseFloat(lineI.value);if(!(L>=0)){fo.textContent=fu.textContent='';eC.replaceChildren();return}
+        const O=lineProbs(r.dm,L,'over'),U=lineProbs(r.dm,L,'under');
+        fo.textContent='fair '+fairFrom(O.win,O.push).toFixed(2);fu.textContent='fair '+fairFrom(U.win,U.push).toFixed(2);
+        const oo=parseFloat(oI.value),uo=parseFloat(uI.value);
+        const eo=edgeOf(O.win,O.push,oo),eu=edgeOf(U.win,U.push,uo);
+        if(eo==null&&eu==null){eC.replaceChildren(el('span',{class:'muted',text:'–'}));return}
+        if(eu==null||(eo!=null&&eo>=eu))edgeCell(eC,O.win,O.push,oo,'Over');else edgeCell(eC,U.win,U.push,uo,'Under');
+      };
+      [lineI,oI,uI].forEach(i=>i.addEventListener('input',upd));upd();
+      tb.append(el('tr',{},[nameCell(r),el('td',{class:'hide-sm',text:r.dm.toFixed(1)}),el('td',{},lineI),
+        el('td',{},el('div',{class:'ou'},[el('div',{},[oI,fo]),el('div',{},[uI,fu])])),eC]));
+    });
+    box.append(el('div',{class:'tbl-wrap'},el('table',{},[
+      el('thead',{},el('tr',{},[el('th',{text:'Player'}),el('th',{class:'hide-sm',text:'Exp. disp.'}),el('th',{text:'Line'}),el('th',{text:'Over · Under'}),el('th',{text:'Edge · stake'})])),tb])));
+    box.append(el('p',{class:'note',text:`Enter the bookie's line and price. The fair odds update with the line. The line starts just under the model's expected disposals. Edge = chance × odds − 1 (pushes on whole-number lines refund your stake). Flagged at +${S.min_edge*100}% or more.`}));
   }
   chips();render();
 
   // ---------- track record
-  const T=DATA.track,tt=$('#tab-track');
-  if(!T){tt.append(el('div',{class:'card',text:'No completed games this season yet.'}))}
-  else{
-    const kp=el('div',{class:'kpis'},[
-      el('div',{class:'card kpi'},[el('div',{class:'v',text:T.games}),el('div',{class:'l',text:`${T.season} games predicted out of sample (${T.n.toLocaleString()} player-games)`})]),
-      el('div',{class:'card kpi'},[el('div',{class:'v',text:T.mean_pred.toFixed(2)+' / '+T.mean_act.toFixed(2)}),el('div',{class:'l',text:'Average goals per player: predicted / actual'})]),
-      el('div',{class:'card kpi'},[el('div',{class:'v',text:T.last.round_actual+' / '+T.last.round_expected}),el('div',{class:'l',text:`Round ${T.last.round}: goalkickers actual / expected`})]),
-    ]);
-    tt.append(kp);
-
-    // log loss bars
-    const ll=T.logloss,mx=Math.max(ll.model,ll.position,ll.naive);
-    const bar=(lab,v,me)=>el('div',{class:'row'+(me?' me':'')},[el('span',{text:lab}),el('div',{class:'track'},el('div',{class:'fill',style:`width:${(v/mx*100).toFixed(1)}%`})),el('span',{style:'text-align:right',text:v.toFixed(3)})]);
-    const llCard=el('div',{class:'card'},[el('h2',{text:'Prediction error (log loss, lower is better)'}),el('div',{class:'meta',text:`Anytime goalkicker, ${T.season}. Every game was predicted using only games played before it.`}),
-      el('div',{class:'bars'},[bar('This model',ll.model,true),bar('Position average',ll.position),bar('Raw goals per game',ll.naive)])]);
-
-    // calibration chart
+  const tip=$('#tip');
+  function calChart(calib,xLab,yLab,tipTxt){
     const W=440,H=300,ml=54,mb=34,mt=10,mr=18,pw=W-ml-mr,ph=H-mt-mb;
     const NS='http://www.w3.org/2000/svg',sv=(t,a)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);return e};
-    const svg=sv('svg',{viewBox:`0 0 ${W} ${H}`,width:'100%',role:'img','aria-label':'Calibration: predicted versus actual goalkicking rate'});
+    const svg=sv('svg',{viewBox:`0 0 ${W} ${H}`,width:'100%',role:'img','aria-label':`${yLab} versus ${xLab}`});
     const x=v=>ml+v*pw,y=v=>mt+ph-v*ph;
     for(let v=0;v<=1.001;v+=0.2){
       svg.append(sv('line',{x1:ml,x2:ml+pw,y1:y(v),y2:y(v),stroke:'var(--grid)','stroke-width':1}));
@@ -260,33 +304,59 @@ svg text{fill:var(--text-3);font-size:11px}
       const tx=sv('text',{x:x(v),y:H-mb+16,'text-anchor':'middle'});tx.textContent=Math.round(v*100)+'%';svg.append(tx);
     }
     svg.append(sv('line',{x1:x(0),y1:y(0),x2:x(1),y2:y(1),stroke:'var(--text-3)','stroke-width':1.5,'stroke-dasharray':'4 4'}));
-    const xl=sv('text',{x:ml+pw/2,y:H-2,'text-anchor':'middle'});xl.textContent='Model chance of 1+ goal';svg.append(xl);
-    const tip=$('#tip'),nmax=Math.max(...T.calib.map(c=>c.n));
-    const pts=sv('polyline',{points:T.calib.filter(c=>c.n>=20).map(c=>`${x(c.pred)},${y(c.act)}`).join(' '),fill:'none',stroke:'var(--series-1)','stroke-width':2});svg.append(pts);
-    T.calib.forEach(c=>{
-      const rr=4+6*Math.sqrt(c.n/nmax);
-      const g=sv('g',{});
+    const xl=sv('text',{x:ml+pw/2,y:H-2,'text-anchor':'middle'});xl.textContent=xLab;svg.append(xl);
+    const yl=sv('text',{x:10,y:mt+ph/2,'text-anchor':'middle',transform:`rotate(-90 10 ${mt+ph/2})`});yl.textContent=yLab;svg.append(yl);
+    const nmax=Math.max(...calib.map(c=>c.n));
+    svg.append(sv('polyline',{points:calib.filter(c=>c.n>=20).map(c=>`${x(c.pred)},${y(c.act)}`).join(' '),fill:'none',stroke:'var(--series-1)','stroke-width':2}));
+    calib.forEach(c=>{
+      const rr=4+6*Math.sqrt(c.n/nmax),g=sv('g',{});
       g.append(sv('circle',{cx:x(c.pred),cy:y(c.act),r:rr+2,fill:'var(--surface)'}));
       g.append(sv('circle',{cx:x(c.pred),cy:y(c.act),r:rr,fill:'var(--series-1)','fill-opacity':c.n<20?0.35:1}));
       g.append(sv('circle',{cx:x(c.pred),cy:y(c.act),r:Math.max(rr+6,14),fill:'transparent'}));
-      g.style.cursor='default';
-      g.addEventListener('mousemove',e=>{tip.textContent=`Rated ${pct(c.lo)}–${pct(c.hi)}: ${c.n} players. Model said ${pct(c.pred)} on average, and ${pct(c.act)} kicked a goal.`;tip.style.left=Math.min(e.clientX+12,innerWidth-230)+'px';tip.style.top=(e.clientY+12)+'px';tip.style.opacity=1});
+      g.addEventListener('mousemove',e=>{tip.textContent=tipTxt(c);tip.style.left=Math.min(e.clientX+12,innerWidth-230)+'px';tip.style.top=(e.clientY+12)+'px';tip.style.opacity=1});
       g.addEventListener('mouseleave',()=>tip.style.opacity=0);
       svg.append(g);
     });
-    const yl=sv('text',{x:10,y:mt+ph/2,'text-anchor':'middle',transform:`rotate(-90 10 ${mt+ph/2})`});yl.textContent='Actually kicked a goal';svg.append(yl);
-    const calTbl=el('table',{class:'hidden',style:'margin-top:8px'},[el('thead',{},el('tr',{},['Model rating','Players','Predicted','Actual'].map(h=>el('th',{text:h})))),
-      el('tbody',{},T.calib.map(c=>el('tr',{},[el('td',{text:`${pct(c.lo)}–${pct(c.hi)}`}),el('td',{text:c.n}),el('td',{text:pct(c.pred)}),el('td',{text:pct(c.act)})])))]);
-    const calCard=el('div',{class:'card'},[el('h2',{text:'Calibration'}),el('div',{class:'meta',text:'When the model says 40%, do 40% of those players kick a goal? Dots on the dashed line mean yes. Bigger dots are bigger samples.'}),svg,
-      el('button',{class:'showall',onclick:e=>{calTbl.classList.toggle('hidden');e.target.textContent=calTbl.classList.contains('hidden')?'Show as table':'Hide table'}},'Show as table'),calTbl]);
-    tt.append(el('div',{class:'grid2'},[llCard,calCard]));
-
-    // last round
+    const tbl=el('table',{class:'hidden',style:'margin-top:8px'},[el('thead',{},el('tr',{},['Model rating','Count','Predicted','Actual'].map(h=>el('th',{text:h})))),
+      el('tbody',{},calib.map(c=>el('tr',{},[el('td',{text:`${pct(c.lo)}–${pct(c.hi)}`}),el('td',{text:c.n}),el('td',{text:pct(c.pred)}),el('td',{text:pct(c.act)})])))]);
+    return [svg,el('button',{class:'showall',onclick:e=>{tbl.classList.toggle('hidden');e.target.textContent=tbl.classList.contains('hidden')?'Show as table':'Hide table'}},'Show as table'),tbl];
+  }
+  function barCard(title,sub,items,fmt){
+    const mx=Math.max(...items.map(i=>i[1]));
+    return el('div',{class:'card'},[el('h2',{text:title}),el('div',{class:'meta',text:sub}),
+      el('div',{class:'bars'},items.map(([lab,v,me])=>el('div',{class:'row'+(me?' me':'')},[el('span',{text:lab}),el('div',{class:'track'},el('div',{class:'fill',style:`width:${(v/mx*100).toFixed(1)}%`})),el('span',{style:'text-align:right',text:fmt(v)})])))]);
+  }
+  const T=DATA.track,DT=DATA.disp_track,tt=$('#tab-track');
+  if(!T){tt.append(el('div',{class:'card',text:'No completed games this season yet.'}))}
+  else{
+    tt.append(el('h2',{class:'sec',text:'Goalkickers'}));
+    tt.append(el('div',{class:'kpis'},[
+      el('div',{class:'card kpi'},[el('div',{class:'v',text:T.games}),el('div',{class:'l',text:`${T.season} games predicted out of sample (${T.n.toLocaleString()} player-games)`})]),
+      el('div',{class:'card kpi'},[el('div',{class:'v',text:T.mean_pred.toFixed(2)+' / '+T.mean_act.toFixed(2)}),el('div',{class:'l',text:'Average goals per player: predicted / actual'})]),
+      el('div',{class:'card kpi'},[el('div',{class:'v',text:T.last.round_actual+' / '+T.last.round_expected}),el('div',{class:'l',text:`Round ${T.last.round}: goalkickers actual / expected`})]),
+    ]));
+    const ll=T.logloss;
+    tt.append(el('div',{class:'grid2'},[
+      barCard('Prediction error (log loss, lower is better)',`Anytime goalkicker, ${T.season}. Every game was predicted using only games played before it.`,
+        [['This model',ll.model,true],['Position average',ll.position],['Raw goals per game',ll.naive]],v=>v.toFixed(3)),
+      el('div',{class:'card'},[el('h2',{text:'Calibration'}),el('div',{class:'meta',text:'When the model says 40%, do 40% of those players kick a goal? Dots on the dashed line mean yes. Bigger dots are bigger samples.'}),
+        ...calChart(T.calib,'Model chance of 1+ goal','Actually kicked a goal',c=>`Rated ${pct(c.lo)}–${pct(c.hi)}: ${c.n} players. Model said ${pct(c.pred)} on average, and ${pct(c.act)} kicked a goal.`)])]));
     const L=T.last;
     const lt=el('tbody',{},L.top.map(r=>el('tr',{},[el('td',{},[el('span',{class:'pname',text:r.n}),el('span',{class:'pteam',text:`${short(r.t)} v ${short(r.o)}`})]),el('td',{text:pct(r.p1)}),el('td',{},el('span',{class:r.g>0?'hit':'miss',text:r.g>0?`✓ ${r.g} goal${r.g>1?'s':''}`:'✗ 0'}))])));
     tt.append(el('div',{class:'card',style:'margin-top:12px'},[el('h2',{text:`Round ${L.round}: the model's 20 most likely goalkickers`}),
       el('div',{class:'meta',text:`Expected ${L.top_expected} of them to kick a goal; ${L.top_actual} did. One round is mostly luck. The calibration chart above is the better guide.`}),
       el('div',{class:'tbl-wrap'},el('table',{},[el('thead',{},el('tr',{},[el('th',{text:'Player'}),el('th',{text:'Model chance'}),el('th',{text:'Result'})])),lt]))]));
+  }
+  if(DT){
+    tt.append(el('h2',{class:'sec',text:'Disposals'}));
+    const mae=DT.mae;
+    tt.append(el('div',{class:'grid2'},[
+      el('div',{},[
+        barCard('Average miss (disposals, lower is better)',`How far the prediction was from the actual count, ${DT.season}, out of sample (${DT.n.toLocaleString()} player-games).`,
+          [['This model',mae.model,true],['Raw season average',mae.naive],['Position average',mae.position]],v=>v.toFixed(2)),
+        el('div',{class:'card kpi',style:'margin-top:12px'},[el('div',{class:'v',text:pct(DT.within3)}),el('div',{class:'l',text:'Predictions within 3 disposals of the actual count'})])]),
+      el('div',{class:'card'},[el('h2',{text:'Calibration'}),el('div',{class:'meta',text:'Across the 10+, 15+, 20+ and 25+ lines: when the model says 60%, does the player get there 60% of the time?'}),
+        ...calChart(DT.calib,'Model chance of reaching the line','Actually reached it',c=>`Rated ${pct(c.lo)}–${pct(c.hi)}: ${c.n} player-lines. Model said ${pct(c.pred)} on average, and ${pct(c.act)} got there.`)])]));
   }
 })();
 </script>

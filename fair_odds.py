@@ -22,6 +22,7 @@ import numpy as np
 import pandas as pd
 
 from model import Params, load, walk_forward, p_at_least
+from model_disp import DParams, walk_forward as disp_walk_forward
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, "data")
@@ -53,6 +54,9 @@ def compute_round(rnd=None):
     p = Params(**json.load(open(os.path.join(HERE, "params.json")))) if os.path.exists(os.path.join(HERE, "params.json")) else Params()
     pm, mt = load()
     _, eng = walk_forward(pm, p)
+    dpf = os.path.join(HERE, "disp_params.json")
+    dp = DParams(**json.load(open(dpf))) if os.path.exists(dpf) else DParams()
+    _, deng = disp_walk_forward(pm, dp)
 
     cur = mt["season"].astype(str).max()
     up = mt[(mt["season"].astype(str) == cur) & (mt["status"] != "CONCLUDED")].copy()
@@ -61,6 +65,7 @@ def compute_round(rnd=None):
     rnd = rnd or int(up["round"].min())
     up = up[up["round"] == rnd]
     eng.new_season(cur)
+    deng.new_season(cur)
 
     lpath = os.path.join(DATA, "lineups.csv")
     named = pd.read_csv(lpath) if os.path.exists(lpath) else pd.DataFrame(columns=["mid", "teamId", "playerId", "position"])
@@ -73,8 +78,11 @@ def compute_round(rnd=None):
             src = "named"
             if len(lu) < 16:
                 lu, src = fallback[fallback["teamId"] == team_id], "last game (teams not named yet)"
-            df = eng.predict_team(team_id, opp_id, is_home, getattr(m, "weather", "") or "",
-                                  list(zip(lu["playerId"], lu["position"])))
+            lineup = list(zip(lu["playerId"], lu["position"]))
+            wx = getattr(m, "weather", "") or ""
+            df = eng.predict_team(team_id, opp_id, is_home, wx, lineup)
+            df = df.merge(deng.predict_team(team_id, opp_id, is_home, wx, lineup), on="playerId", how="left")
+            df["d_size"] = dp.nb_size
             df["name"] = df["playerId"].map(eng.pl_name).fillna(
                 df["playerId"].map(dict(zip(named.get("playerId", []), named.get("name", [])))))
             df["team"], df["opp"], df["match"], df["lineup_source"] = team, opp, f"{m.home} v {m.away}", src

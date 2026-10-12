@@ -15,6 +15,7 @@ import pandas as pd
 
 from fair_odds import compute_round
 from model import walk_forward, logloss
+import model_disp as MD
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SITE = os.path.join(HERE, "site")
@@ -73,6 +74,36 @@ def track_record(pm, p, season):
     }
 
 
+def disp_track(pm, dp, season):
+    res, _ = MD.walk_forward(pm, dp)
+    cur = res[res["season"].astype(str) == season]
+    if cur.empty:
+        return None
+    d = pm.sort_values("date").copy()
+    pl = d.groupby("playerId")
+    n = pl.cumcount()
+    prev = (pl["disposals"].cumsum() - d["disposals"]) / n.replace(0, np.nan)
+    grp = d.groupby("pos_group")
+    pos = (grp["disposals"].cumsum() - d["disposals"]) / grp.cumcount().replace(0, np.nan)
+    d["naive"], d["pos"] = prev.fillna(pos).fillna(11.0), pos.fillna(11.0)
+    b = d[d["season"].astype(str) == season]
+    rows = []
+    for L in MD.LINES:
+        rows.append(pd.DataFrame({"p": MD.p_at_least(cur["d_mu"], L, dp.nb_size), "hit": (cur["disposals"] >= L).astype(int)}))
+    a = pd.concat(rows)
+    a["bucket"] = pd.cut(a["p"], [0, .1, .2, .3, .4, .5, .6, .7, .8, .9, 1], include_lowest=True)
+    cal = a.groupby("bucket", observed=True).agg(n=("hit", "size"), pred=("p", "mean"), act=("hit", "mean")).reset_index()
+    return {
+        "season": season, "n": int(len(cur)),
+        "mae": {"model": r(np.mean(np.abs(cur["d_mu"] - cur["disposals"])), 2),
+                "naive": r(np.mean(np.abs(b["naive"] - b["disposals"])), 2),
+                "position": r(np.mean(np.abs(b["pos"] - b["disposals"])), 2)},
+        "within3": r(np.mean(np.abs(cur["d_mu"] - cur["disposals"]) <= 3), 3),
+        "calib": [{"lo": float(max(iv.left, 0)), "hi": float(iv.right), "n": int(n), "pred": r(pr), "act": r(ac)}
+                  for iv, n, pr, ac in zip(cal["bucket"], cal["n"], cal["pred"], cal["act"])],
+    }
+
+
 def build():
     res, rnd, up, p, pm = compute_round()
     mt = pd.read_csv(os.path.join(HERE, "data", "matches.csv"))
@@ -101,10 +132,15 @@ def build():
                 "teams": teams,
                 "players": [{"n": x.name, "t": x.team, "pos": x.position, "gp": int(x.games_hist),
                              "xs": r(x.exp_shots, 2), "acc": r(x.acc), "lam": r(x.lam),
-                             "p1": r(x.p1, 4), "p2": r(x.p2, 4), "p3": r(x.p3, 4)} for x in g.itertuples()],
+                             "p1": r(x.p1, 4), "p2": r(x.p2, 4), "p3": r(x.p3, 4),
+                             "dm": r(x.d_mu, 2), "dtog": r(x.d_tog, 0)} for x in g.itertuples()],
             })
 
     data["track"] = track_record(pm, p, season)
+    dpf = os.path.join(HERE, "disp_params.json")
+    dp = MD.DParams(**json.load(open(dpf))) if os.path.exists(dpf) else MD.DParams()
+    data["settings"]["d_size"] = dp.nb_size
+    data["disp_track"] = disp_track(pm, dp, season)
 
     os.makedirs(SITE, exist_ok=True)
     tpl = open(os.path.join(HERE, "site_template.html"), encoding="utf-8").read()
